@@ -1,0 +1,7 @@
+.env
+*.venv
+.venv/*
+*.py[co]
+*.egg-info
+*.csv
+__pycache__/*
