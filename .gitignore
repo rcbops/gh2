@@ -5,3 +5,5 @@
 *.egg-info
 *.csv
 __pycache__/*
+build/
+dist/
