@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 
 import argparse
+import datetime
 import csv
 import os
 
@@ -32,10 +33,17 @@ def make_parser():
     args.add_argument(
         '--include-pull-requests',
         help='Toggles the inclusion of PRs in output',
-        type=bool, default=False,
+        action='store_true', default=False,
     )
     args.add_argument(
-        'repository', help='Repository to retrieve issues from',
+        '--skip-date-normalization',
+        help='By default, if a sequence of dates are not sequential, the tool '
+             'will coerce them to look sequential.',
+        action='store_true', default=False,
+    )
+    args.add_argument(
+        'repository',
+        help='Repository to retrieve issues from (e.g., rcbops/rpc-openstack)',
     )
     return args
 
@@ -46,15 +54,41 @@ def issues_for(owner, name, state, token):
     return repository.issues(state=state, direction='asc')
 
 
+def label_events_for(issue):
+    if not issue.labels:
+        return []
+    return ((event.label['name'], event) for event in issue.events()
+            if event.event == 'labeled')
+
+
 def issue_to_list(fields, issue):
-    attributes = (
-        getattr(issue, field, None) if field is not None else None
-        for field in fields
-    )
+    retrievers = fields_to_callables(fields)
+    attributes = (retriever(issue) for retriever in retrievers)
     return [
         attr.encode('utf-8') if hasattr(attr, 'encode') else attr
         for attr in attributes
     ]
+
+
+def field_to_callable(field):
+    attrs = field.split(':')
+    if len(attrs) > 1 and attrs[0] == 'label':
+        label_name = attrs[1]
+        attribute = attrs[2]
+
+        def retriever(issue):
+            for label, event in label_events_for(issue):
+                if label_name == label:
+                    return getattr(event, attribute, None)
+    else:
+        def retriever(issue):
+            return getattr(issue, field, None)
+
+    return retriever
+
+
+def fields_to_callables(fields):
+    return [field_to_callable(field) for field in fields]
 
 
 def format_dates(attributes, fmt):
@@ -69,19 +103,41 @@ def is_pull_request(issue):
     return pr and isinstance(pr, dict)
 
 
-def write_rows(filename, headers, fields, issues, date_format, include_prs):
+def normalize_sequential_dates(issue_list):
+    for start, item in enumerate(issue_list):
+        if isinstance(item, datetime.datetime):
+            break
+    else:
+        return issue_list
+
+    dates = issue_list[start:]
+    number_of_dates = len(dates) - 1
+    # We need to work backwards
+    i = 0
+    while i < number_of_dates:
+        date = dates[i]
+        filtered_dates = filter(None, dates[i + 1:])
+        if filtered_dates:
+            next_earliest_date = min(filtered_dates)
+            if date is not None and date > next_earliest_date:
+                dates[i] = next_earliest_date
+        i += 1
+
+    return issue_list[:start] + dates
+
+
+def write_rows(filename, headers, fields, issues, date_format, include_prs,
+               skip_normalization):
     with open(filename, 'w') as fd:
         writer = csv.writer(fd)
         writer.writerow(headers)
         for issue in issues:
             if not include_prs and is_pull_request(issue):
                 continue
-            writer.writerow(
-                format_dates(
-                    issue_to_list(fields, issue),
-                    date_format,
-                )
-            )
+            issue_data = issue_to_list(fields, issue)
+            if not skip_normalization:
+                issue_data = normalize_sequential_dates(issue_data)
+            writer.writerow(format_dates(issue_data, date_format))
 
 
 def main():
@@ -98,8 +154,14 @@ def main():
         'Needs Review', 'Dev Done'
     ]
     fields = [
-        'number', 'html_url', 'title', 'created_at', None, None, None,
-        'closed_at'
+        'number',
+        'html_url',
+        'title',
+        'created_at',
+        'label:status-approved:created_at',
+        'label:status-doing:created_at',
+        'label:status-needs-review:created_at',
+        'closed_at',
     ]
 
     write_rows(
@@ -114,4 +176,5 @@ def main():
         ),
         date_format=args.date_format,
         include_prs=args.include_pull_requests,
+        skip_normalization=args.skip_date_normalization,
     )
