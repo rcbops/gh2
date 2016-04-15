@@ -117,10 +117,13 @@ def normalize_sequential_dates(issue_list):
     while i < number_of_dates:
         date = dates[i]
         filtered_dates = filter(None, dates[i + 1:])
-        if filtered_dates:
-            next_earliest_date = min(filtered_dates)
-            if date is not None and date > next_earliest_date:
-                dates[i] = next_earliest_date
+        if not filtered_dates:
+            # If everything after this date is None, there's no need to keep
+            # looping
+            break
+        next_earliest_date = min(filtered_dates)
+        if date is not None and date > next_earliest_date:
+            dates[i] = next_earliest_date
         i += 1
 
     return issue_list[:start] + dates
