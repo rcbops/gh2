@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 
 import argparse
+import collections
 import datetime
 import csv
 import os
@@ -61,13 +62,13 @@ def label_events_for(issue):
             if event.event == 'labeled')
 
 
-def issue_to_list(fields, issue):
+def issue_to_dict(fields, issue):
     retrievers = fields_to_callables(fields)
     attributes = (retriever(issue) for retriever in retrievers)
-    return [
-        attr.encode('utf-8') if hasattr(attr, 'encode') else attr
-        for attr in attributes
-    ]
+    return collections.OrderedDict(
+        (field, attr.encode('utf-8') if hasattr(attr, 'encode') else attr)
+        for field, attr in zip(fields, attributes)
+    )
 
 
 def field_to_callable(field):
@@ -104,29 +105,44 @@ def is_pull_request(issue):
 
 
 def normalize_sequential_dates(issue_list):
-    for start, item in enumerate(issue_list):
-        if isinstance(item, datetime.datetime):
-            break
-    else:
-        return issue_list
+    """Adjust issue status dates based on latest state.
 
-    dates = issue_list[start:]
-    number_of_dates = len(dates) - 1
+    issue_list must contain a contiguous set of items that represent dates.
+    None is an exceptable date in this situation. These dates must start with
+    created_at and finish with closed_at. This function searches issue_list for
+    the dates and then modifies them such that older dates always preceed
+    newer dates when viewed from created_at to closed_at.
+    """
+    start, finish = ('created_at', 'closed_at')
+    date_fields = []
+    for field in issue_list:
+        if field == start:
+            date_fields.append(field)
+            continue
+        elif not date_fields:
+            continue
+        else:
+            date_fields.append(field)
+        if field == finish:
+            break
+
+    number_of_dates = len(date_fields) - 1
     # We need to work backwards
     i = 0
     while i < number_of_dates:
-        date = dates[i]
-        filtered_dates = filter(None, dates[i + 1:])
+        date = issue_list[date_fields[i]]
+        filtered_dates = filter(None,
+                                (issue_list[f] for f in date_fields[i + 1:]))
         if not filtered_dates:
             # If everything after this date is None, there's no need to keep
             # looping
             break
         next_earliest_date = min(filtered_dates)
         if date is not None and date > next_earliest_date:
-            dates[i] = next_earliest_date
+            issue_list[date_fields[i]] = next_earliest_date
         i += 1
 
-    return issue_list[:start] + dates
+    return issue_list
 
 
 def write_rows(filename, headers, fields, issues, date_format, include_prs,
@@ -137,10 +153,10 @@ def write_rows(filename, headers, fields, issues, date_format, include_prs,
         for issue in issues:
             if not include_prs and is_pull_request(issue):
                 continue
-            issue_data = issue_to_list(fields, issue)
+            issue_data = issue_to_dict(fields, issue)
             if not skip_normalization:
                 issue_data = normalize_sequential_dates(issue_data)
-            writer.writerow(format_dates(issue_data, date_format))
+            writer.writerow(format_dates(issue_data.values(), date_format))
 
 
 def main():
