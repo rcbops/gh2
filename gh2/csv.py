@@ -4,6 +4,7 @@ import argparse
 import collections
 import datetime
 import csv
+import itertools
 import os
 
 import github3
@@ -43,15 +44,24 @@ def make_parser():
         action='store_true', default=False,
     )
     args.add_argument(
+        '--include-labels',
+        help='By default, the output will not include columns for the labels '
+             'associated with the issue.',
+        action='store_true', default=False,
+    )
+    args.add_argument(
         'repository',
         help='Repository to retrieve issues from (e.g., rcbops/rpc-openstack)',
     )
     return args
 
 
-def issues_for(owner, name, state, token):
+def get_repo(owner, name, token):
     gh = github3.GitHub(token=token)
-    repository = gh.repository(owner, name)
+    return gh.repository(owner, name)
+
+
+def issues_for(repository, state):
     return repository.issues(state=state, direction='asc')
 
 
@@ -62,12 +72,16 @@ def label_events_for(issue):
             if event.event == 'labeled')
 
 
-def issue_to_dict(fields, issue):
+def issue_to_dict(fields, issue, additional_labels):
     retrievers = fields_to_callables(fields)
-    attributes = (retriever(issue) for retriever in retrievers)
+    base_attributes = (retriever(issue) for retriever in retrievers)
+    issue_labels = list(issue.labels())
+    label_attributes = (label in issue_labels for label in additional_labels)
+    attributes = itertools.chain(base_attributes, label_attributes)
     return collections.OrderedDict(
         (field, attr.encode('utf-8') if hasattr(attr, 'encode') else attr)
-        for field, attr in zip(fields, attributes)
+        for field, attr in zip(itertools.chain(fields, additional_labels),
+                               attributes)
     )
 
 
@@ -146,17 +160,29 @@ def normalize_sequential_dates(issue_list):
 
 
 def write_rows(filename, headers, fields, issues, date_format, include_prs,
-               skip_normalization):
+               skip_normalization, additional_labels):
     with open(filename, 'w') as fd:
         writer = csv.writer(fd)
         writer.writerow(headers)
         for issue in issues:
             if not include_prs and is_pull_request(issue):
                 continue
-            issue_data = issue_to_dict(fields, issue)
+            issue_data = issue_to_dict(fields, issue, additional_labels)
             if not skip_normalization:
                 issue_data = normalize_sequential_dates(issue_data)
             writer.writerow(format_dates(issue_data.values(), date_format))
+
+
+
+def set_headers(repo, labels=None):
+    headers = [
+        'ID', 'Link', 'Name', 'Backlog', 'Approved', 'Doing',
+        'Needs Review', 'Dev Done'
+    ]
+    if labels:
+       headers.extend('Label: ' + label.name for label in labels)
+
+    return headers
 
 
 def main():
@@ -168,10 +194,14 @@ def main():
     args = parser.parse_args()
 
     repo_owner, repo_name = args.repository.split('/', 1)
-    headers = [
-        'ID', 'Link', 'Name', 'Backlog', 'Approved', 'Doing',
-        'Needs Review', 'Dev Done'
-    ]
+    repo = get_repo(repo_owner, repo_name, token)
+
+    if args.include_labels:
+        additional_labels = sorted((label for label in repo.labels()),
+                                    key=lambda l: l.name)
+    else:
+        additional_labels = []
+    headers = set_headers(repo, additional_labels)
     fields = [
         'number',
         'html_url',
@@ -187,13 +217,9 @@ def main():
         filename=args.output_file,
         headers=headers,
         fields=fields,
-        issues=issues_for(
-            owner=repo_owner,
-            name=repo_name,
-            state=args.issue_state,
-            token=token,
-        ),
+        issues=issues_for(repo, state=args.issue_state),
         date_format=args.date_format,
         include_prs=args.include_pull_requests,
         skip_normalization=args.skip_date_normalization,
+        additional_labels=additional_labels
     )
