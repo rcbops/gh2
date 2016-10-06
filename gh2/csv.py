@@ -177,7 +177,7 @@ def write_rows(filename, headers, fields, issues, date_format, include_prs,
 def set_headers(repo, labels=None):
     headers = [
         'ID', 'Link', 'Name', 'Backlog', 'Approved', 'Doing',
-        'Needs Review', 'Dev Done'
+        'Needs Review', 'Pending SHA Update',  'Dev Done'
     ]
     if labels:
        headers.extend('Label: ' + label.name for label in labels)
@@ -210,6 +210,7 @@ def main():
         'label:status-approved:created_at',
         'label:status-doing:created_at',
         'label:status-needs-review:created_at',
+        'label:status-pending-sha-update:created_at',
         'closed_at',
     ]
 
