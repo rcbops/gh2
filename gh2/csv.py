@@ -7,6 +7,8 @@ import csv
 import itertools
 import os
 
+import cachecontrol
+import cachecontrol.caches
 import github3
 
 
@@ -56,8 +58,13 @@ def make_parser():
     return args
 
 
-def get_repo(owner, name, token):
+def get_repo(owner, name, token, cache_path='~/.gh2/cache'):
+    cache_path = os.path.expanduser(cache_path)
+
     gh = github3.GitHub(token=token)
+    gh.session = cachecontrol.CacheControl(
+        gh.session, cache=cachecontrol.caches.FileCache(cache_path)
+    )
     return gh.repository(owner, name)
 
 
