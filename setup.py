@@ -17,7 +17,8 @@ import sys
 
 
 install_requires = [
-    "github3.py >= 1.0.0a1"
+    "github3.py >= 1.0.0a1",
+    "cachecontrol[filecache]",
 ]
 
 if sys.version_info[:2] < (2, 7):
