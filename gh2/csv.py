@@ -183,8 +183,10 @@ def write_rows(filename, headers, fields, issues, date_format, include_prs,
 
 def set_headers(repo, labels=None):
     headers = [
-        'ID', 'Link', 'Name', 'Backlog', 'Approved', 'Doing',
-        'Needs Review', 'Pending SHA Update',  'Dev Done'
+        'ID', 'Link', 'Name', 'Backlog', 'Triage', 'Investigate', 'Approved',
+        'Doing', 'Needs Review (Ready)', 'Needs Review (Doing)',
+        'Backport (Ready)', 'Backport (Doing)', 'Documentation (Ready)',
+        'Documentation (Doing)', 'Pending SHA Update', 'Dev Done',
     ]
     if labels:
        headers.extend('Label: ' + label.name for label in labels)
@@ -214,9 +216,16 @@ def main():
         'html_url',
         'title',
         'created_at',
+        'label:status-triage:created_at',
+        'label:status-investigate:created_at',
         'label:status-approved:created_at',
         'label:status-doing:created_at',
-        'label:status-needs-review:created_at',
+        'label:status-needs-review-ready:created_at',
+        'label:status-needs-review-doing:created_at',
+        'label:status-needs-backport-ready:created_at',
+        'label:status-needs-backport-doing:created_at',
+        'label:status-needs-documentation-ready:created_at',
+        'label:status-needs-documentation-doing:created_at',
         'label:status-pending-sha-update:created_at',
         'closed_at',
     ]
