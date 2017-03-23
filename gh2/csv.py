@@ -52,6 +52,14 @@ def make_parser():
         action='store_true', default=False,
     )
     args.add_argument(
+        '--filter-label',
+        help='Only include issues with this label in the output. Multiple '
+             'invocations of this flag will require the issue to have all '
+             ' labels.',
+        action='append', dest='filter_labels',
+        default=[],
+    )
+    args.add_argument(
         'repository',
         help='Repository to retrieve issues from (e.g., rcbops/rpc-openstack)',
     )
@@ -167,18 +175,22 @@ def normalize_sequential_dates(issue_list):
 
 
 def write_rows(filename, headers, fields, issues, date_format, include_prs,
-               skip_normalization, additional_labels):
+               skip_normalization, additional_labels, filter_labels=None):
     with open(filename, 'w') as fd:
         writer = csv.writer(fd)
         writer.writerow(headers)
+        if filter_labels:
+            filter_labels = set(filter_labels)
         for issue in issues:
             if not include_prs and is_pull_request(issue):
+                continue
+            issue_labels = {l.name for l in issue.labels()}
+            if filter_labels and not filter_labels.issubset(issue_labels):
                 continue
             issue_data = issue_to_dict(fields, issue, additional_labels)
             if not skip_normalization:
                 issue_data = normalize_sequential_dates(issue_data)
             writer.writerow(format_dates(issue_data.values(), date_format))
-
 
 
 def set_headers(repo, labels=None):
@@ -238,5 +250,6 @@ def main():
         date_format=args.date_format,
         include_prs=args.include_pull_requests,
         skip_normalization=args.skip_date_normalization,
-        additional_labels=additional_labels
+        additional_labels=additional_labels,
+        filter_labels=args.filter_labels
     )
