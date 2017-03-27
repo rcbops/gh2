@@ -56,8 +56,7 @@ def make_parser():
         help='Only include issues with this label in the output. Multiple '
              'invocations of this flag will require the issue to have all '
              ' labels.',
-        action='append', dest='filter_labels',
-        default=[],
+        action='append', dest='filter_labels', default=[],
     )
     args.add_argument(
         'repository',
@@ -110,10 +109,12 @@ def field_to_callable(field):
             for label, event in label_events_for(issue):
                 if label_name == label:
                     return getattr(event, attribute, None)
+    elif attrs[0] == 'Milestone':
+        def retriever(issue):
+            return getattr(issue.milestone, 'title', 'No Milestone')
     else:
         def retriever(issue):
             return getattr(issue, field, None)
-
     return retriever
 
 
@@ -199,10 +200,10 @@ def set_headers(repo, labels=None):
         'Doing', 'Needs Review (Ready)', 'Needs Review (Doing)',
         'Backport (Ready)', 'Backport (Doing)', 'Documentation (Ready)',
         'Documentation (Doing)', 'Pending SHA Update', 'Dev Done',
+        'Milestone'
     ]
     if labels:
-       headers.extend('Label: ' + label.name for label in labels)
-
+        headers.extend('Label: ' + label.name for label in labels)
     return headers
 
 
@@ -219,9 +220,10 @@ def main():
 
     if args.include_labels:
         additional_labels = sorted((label for label in repo.labels()),
-                                    key=lambda l: l.name)
+                                   key=lambda l: l.name)
     else:
         additional_labels = []
+
     headers = set_headers(repo, additional_labels)
     fields = [
         'number',
@@ -240,6 +242,7 @@ def main():
         'label:status-needs-documentation-doing:created_at',
         'label:status-pending-sha-update:created_at',
         'closed_at',
+        'Milestone'
     ]
 
     write_rows(
