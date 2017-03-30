@@ -2,7 +2,6 @@ from __future__ import absolute_import
 
 import argparse
 import collections
-import datetime
 import csv
 import itertools
 import os
@@ -16,12 +15,6 @@ def make_parser():
     args = argparse.ArgumentParser(
         description='Convert GitHub issues to a CSV file'
     )
-    # args.add_argument(
-    #     '--fields', help='Names of data fields to take from an Issue'
-    # )
-    # args.add_argument(
-    #     '--headers', help='Names of the column headers'
-    # )
     args.add_argument(
         '--issue-state', help='Whether issues are closed, open, or both',
         choices=['open', 'closed', 'all'], default='all',
@@ -59,13 +52,17 @@ def make_parser():
         action='append', dest='filter_labels', default=[],
     )
     args.add_argument(
-        'repository',
-        help='Repository to retrieve issues from (e.g., rcbops/rpc-openstack)',
+        '--repo',
+        help='Repository to retrieve issues from (e.g. rcbops/rpc-openstack). '
+             'Multiple invocations of this flag mean issues from all repos '
+             'will be collated into a single output file.',
+        action='append', dest='repositories', required=True, default=[],
     )
     return args
 
 
-def get_repo(owner, name, token, cache_path='~/.gh2/cache'):
+def get_repo(repository, token, cache_path='~/.gh2/cache'):
+    owner, name = repository.split('/', 1)
     cache_path = os.path.expanduser(cache_path)
 
     gh = github3.GitHub(token=token)
@@ -86,15 +83,16 @@ def label_events_for(issue):
             if event.event == 'labeled')
 
 
-def issue_to_dict(fields, issue, additional_labels):
+def issue_to_dict(fields, issue, additional_label_names):
     retrievers = fields_to_callables(fields)
     base_attributes = (retriever(issue) for retriever in retrievers)
-    issue_labels = list(issue.labels())
-    label_attributes = (label in issue_labels for label in additional_labels)
+    issue_label_names = [label.name for label in issue.labels()]
+    label_attributes = (label in issue_label_names
+                        for label in additional_label_names)
     attributes = itertools.chain(base_attributes, label_attributes)
     return collections.OrderedDict(
         (field, attr.encode('utf-8') if hasattr(attr, 'encode') else attr)
-        for field, attr in zip(itertools.chain(fields, additional_labels),
+        for field, attr in zip(itertools.chain(fields, additional_label_names),
                                attributes)
     )
 
@@ -175,11 +173,16 @@ def normalize_sequential_dates(issue_list):
     return issue_list
 
 
-def write_rows(filename, headers, fields, issues, date_format, include_prs,
-               skip_normalization, additional_labels, filter_labels=None):
-    with open(filename, 'w') as fd:
+def write_headers(filename, headers):
+    with open(filename, 'w+') as fd:
         writer = csv.writer(fd)
         writer.writerow(headers)
+
+
+def write_rows(filename, fields, issues, date_format, include_prs,
+               skip_normalization, additional_label_names, filter_labels=None):
+    with open(filename, 'a+') as fd:
+        writer = csv.writer(fd)
         if filter_labels:
             filter_labels = set(filter_labels)
         for issue in issues:
@@ -188,13 +191,13 @@ def write_rows(filename, headers, fields, issues, date_format, include_prs,
             issue_labels = {l.name for l in issue.labels()}
             if filter_labels and not filter_labels.issubset(issue_labels):
                 continue
-            issue_data = issue_to_dict(fields, issue, additional_labels)
+            issue_data = issue_to_dict(fields, issue, additional_label_names)
             if not skip_normalization:
                 issue_data = normalize_sequential_dates(issue_data)
             writer.writerow(format_dates(issue_data.values(), date_format))
 
 
-def set_headers(repo, labels=None):
+def set_headers(labels=None):
     headers = [
         'ID', 'Link', 'Name', 'Backlog', 'Triage', 'Investigate', 'Approved',
         'Doing', 'Needs Review (Ready)', 'Needs Review (Doing)',
@@ -203,28 +206,27 @@ def set_headers(repo, labels=None):
         'Milestone'
     ]
     if labels:
-        headers.extend('Label: ' + label.name for label in labels)
+        headers.extend('Label: ' + label for label in labels)
     return headers
 
 
-def main():
-    parser = make_parser()
+def get_all_label_names(repositories):
+    labels = set()
+    for repo in repositories:
+        labels.update(l.name for l in repo.labels())
+    return sorted(labels)
+
+
+def get_token(parser):
     token = os.environ.get('GITHUB_TOKEN')
     if token is None:
         parser.exit(status=1,
                     message='No GITHUB_TOKEN specified by the user\n')
-    args = parser.parse_args()
+    return token
 
-    repo_owner, repo_name = args.repository.split('/', 1)
-    repo = get_repo(repo_owner, repo_name, token)
 
-    if args.include_labels:
-        additional_labels = sorted((label for label in repo.labels()),
-                                   key=lambda l: l.name)
-    else:
-        additional_labels = []
+def main():
 
-    headers = set_headers(repo, additional_labels)
     fields = [
         'number',
         'html_url',
@@ -245,14 +247,34 @@ def main():
         'Milestone'
     ]
 
-    write_rows(
-        filename=args.output_file,
-        headers=headers,
-        fields=fields,
-        issues=issues_for(repo, state=args.issue_state),
-        date_format=args.date_format,
-        include_prs=args.include_pull_requests,
-        skip_normalization=args.skip_date_normalization,
-        additional_labels=additional_labels,
-        filter_labels=args.filter_labels
+    parser = make_parser()
+    args = parser.parse_args()
+    token = get_token(parser)
+    filename = args.output_file
+    repositories = args.repositories
+
+    repos = [get_repo(repo, token) for repo in repositories]
+    if args.include_labels:
+        additional_label_names = get_all_label_names(repos)
+    else:
+        additional_label_names = []
+
+    headers = set_headers(additional_label_names)
+
+    write_headers(
+        filename=filename,
+        headers=headers
     )
+
+    # repo loop
+    for repo in repos:
+        write_rows(
+            filename=filename,
+            fields=fields,
+            issues=issues_for(repo, state=args.issue_state),
+            date_format=args.date_format,
+            include_prs=args.include_pull_requests,
+            skip_normalization=args.skip_date_normalization,
+            additional_label_names=additional_label_names,
+            filter_labels=args.filter_labels
+        )
